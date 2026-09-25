@@ -195,17 +195,50 @@ function isRejectedVideoId(videoId) {
   return Boolean(videoId && getRejectedVideoIds().includes(videoId));
 }
 
+function cleanText(value) {
+  return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function parseAriaLabel(label) {
+  const text = cleanText(label);
+  const match = text.match(/^(.+?)\s+by\s+(.+?)(?:\s+\d|\s+Streamed|\s+Premiered|\s+Updated|$)/i);
+
+  if (!match) {
+    return { title: "", creator: "" };
+  }
+
+  return {
+    title: cleanText(match[1]),
+    creator: cleanText(match[2])
+  };
+}
+
 function getCreatorFromRecommendation(item) {
   const owner =
     item.querySelector("ytd-channel-name #text a") ||
+    item.querySelector("ytd-channel-name a") ||
+    item.querySelector("yt-formatted-string.ytd-channel-name a") ||
     item.querySelector("#channel-name #text a") ||
     item.querySelector("#channel-name a") ||
+    item.querySelector(".yt-lockup-metadata-view-model-wiz__metadata a[href^='/@']") ||
+    item.querySelector(".yt-content-metadata-view-model-wiz__metadata-row a[href^='/@']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/@']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/channel/']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/c/']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/user/']");
 
-  return owner?.textContent?.trim() || "";
+  const ownerText = cleanText(owner?.textContent);
+
+  if (ownerText) {
+    return ownerText;
+  }
+
+  const ariaLabel =
+    item.querySelector("a#video-title")?.getAttribute("aria-label") ||
+    item.querySelector("a[href*='watch?v=']")?.getAttribute("aria-label") ||
+    item.getAttribute("aria-label");
+
+  return parseAriaLabel(ariaLabel).creator;
 }
 
 function getVideoItemFromLink(link) {
@@ -223,14 +256,25 @@ function getVideoItemFromLink(link) {
 }
 
 function getCandidateTitle(link, item) {
+  const titleLink =
+    item?.querySelector("a#video-title") ||
+    item?.querySelector("#video-title") ||
+    item?.querySelector("a[href*='watch?v='][title]") ||
+    item?.querySelector(".yt-lockup-metadata-view-model-wiz__title a") ||
+    item?.querySelector(".yt-lockup-metadata-view-model-wiz__title") ||
+    item?.querySelector("h3 a[href*='watch?v=']");
+  const ariaData = parseAriaLabel(
+    titleLink?.getAttribute("aria-label") ||
+      link?.getAttribute?.("aria-label") ||
+      item?.getAttribute?.("aria-label")
+  );
   const title =
-    item?.querySelector("#video-title")?.textContent ||
-    item?.querySelector("a#video-title")?.getAttribute("title") ||
-    link.getAttribute("aria-label") ||
-    link.getAttribute("title") ||
-    link.textContent;
+    titleLink?.getAttribute?.("title") ||
+    cleanText(titleLink?.textContent) ||
+    ariaData.title ||
+    link?.getAttribute?.("title");
 
-  return (title || "").replace(/\s+/g, " ").trim().slice(0, 140);
+  return cleanText(title).slice(0, 140);
 }
 
 function truncate(value, maxLength = 72) {
@@ -254,8 +298,11 @@ function describeCandidate(link, item, url) {
 
 function describeRecommendationItem(item) {
   const link =
-    item.querySelector("a#thumbnail[href*='watch']") ||
     item.querySelector("a#video-title[href*='watch']") ||
+    item.querySelector("a[href*='watch?v='][title]") ||
+    item.querySelector(".yt-lockup-metadata-view-model-wiz__title a[href*='watch']") ||
+    item.querySelector("h3 a[href*='watch']") ||
+    item.querySelector("a#thumbnail[href*='watch']") ||
     item.querySelector("a.yt-simple-endpoint[href*='watch']") ||
     item.querySelector(WATCH_LINK_SELECTOR);
   const url = getRecommendationUrl(item);
@@ -365,8 +412,11 @@ function markBlockedRecommendations() {
 
       if (url && isDifferentVideo(url) && isPlainWatchVideo(url) && !isRejectedVideoId(videoId)) {
         const link =
-          item.querySelector("a#thumbnail[href*='watch']") ||
           item.querySelector("a#video-title[href*='watch']") ||
+          item.querySelector("a[href*='watch?v='][title]") ||
+          item.querySelector(".yt-lockup-metadata-view-model-wiz__title a[href*='watch']") ||
+          item.querySelector("h3 a[href*='watch']") ||
+          item.querySelector("a#thumbnail[href*='watch']") ||
           item.querySelector("a.yt-simple-endpoint[href*='watch']");
 
         safeCandidates.push({
