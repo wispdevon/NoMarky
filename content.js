@@ -233,11 +233,40 @@ function getCandidateTitle(link, item) {
   return (title || "").replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
+function truncate(value, maxLength = 72) {
+  const text = (value || "").replace(/\s+/g, " ").trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
 function describeCandidate(link, item, url) {
   return {
     title: getCandidateTitle(link, item) || "(untitled)",
     creator: item ? getCreatorFromRecommendation(item) || "(unknown creator)" : "(no card)",
     videoId: getVideoId(url) || "(no id)",
+    url
+  };
+}
+
+function describeRecommendationItem(item) {
+  const link =
+    item.querySelector("a#thumbnail[href*='watch']") ||
+    item.querySelector("a#video-title[href*='watch']") ||
+    item.querySelector("a.yt-simple-endpoint[href*='watch']") ||
+    item.querySelector(WATCH_LINK_SELECTOR);
+  const url = getRecommendationUrl(item);
+  const creator = getCreatorFromRecommendation(item) || "(unknown creator)";
+  const title = getCandidateTitle(link || item, item) || "(untitled)";
+
+  return {
+    creator,
+    title,
+    label: `${truncate(creator, 28)} - ${truncate(title, 82)}`,
+    videoId: getVideoId(url || "") || "(no id)",
     url
   };
 }
@@ -602,11 +631,23 @@ async function waitForAlternativeVideoUrl() {
 
   const { source, items } = getSidebarInfo();
   const itemCount = items.length;
-  showToast(`No safe sidebar pick after checking ${itemCount} recommended items.`, "error");
+  const checkedItems = items.map(describeRecommendationItem);
+  const checkedList = checkedItems
+    .slice(0, 6)
+    .map((item) => item.label)
+    .join(" | ");
+  const remainingCount = Math.max(0, checkedItems.length - 6);
+  const moreText = remainingCount ? ` | +${remainingCount} more` : "";
+
+  showToast(
+    `No safe sidebar pick after checking ${itemCount}: ${checkedList || "(no titles found)"}${moreText}`,
+    "error"
+  );
   debugLog("No random sidebar candidate found", {
     page: window.location.href,
     sidebarSource: source,
     sidebarItemCount: itemCount,
+    checkedItems,
     rejectedVideoIds: getRejectedVideoIds()
   });
   return null;
