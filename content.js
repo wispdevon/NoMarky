@@ -82,10 +82,12 @@ function showToast(message, tone = "info") {
   toast.textContent = message;
   container.append(toast);
 
+  const duration = tone === "error" ? 20000 : 9000;
+
   window.setTimeout(() => {
     toast.classList.add("nomarky-toast-exiting");
     window.setTimeout(() => toast.remove(), 300);
-  }, 9000);
+  }, duration);
 }
 
 function debugLog(message, data = {}) {
@@ -199,6 +201,30 @@ function cleanText(value) {
   return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function getVisibleLines(element) {
+  const text = element?.innerText || element?.textContent || "";
+  return text
+    .split(/\n+/)
+    .map(cleanText)
+    .filter(Boolean);
+}
+
+function isMetadataLine(value) {
+  const text = cleanText(value);
+
+  return (
+    !text ||
+    /^\d{1,2}:\d{2}(?::\d{2})?$/.test(text) ||
+    /^LIVE$/i.test(text) ||
+    /^New$/i.test(text) ||
+    /^CC$/i.test(text) ||
+    /\bviews?\b/i.test(text) ||
+    /\bwatching\b/i.test(text) ||
+    /\b(?:second|minute|hour|day|week|month|year)s?\s+ago\b/i.test(text) ||
+    /\b(?:Streamed|Premiered)\b/i.test(text)
+  );
+}
+
 function parseAriaLabel(label) {
   const text = cleanText(label);
   const match = text.match(/^(.+?)\s+by\s+(.+?)(?:\s+\d|\s+Streamed|\s+Premiered|\s+Updated|$)/i);
@@ -216,11 +242,19 @@ function parseAriaLabel(label) {
 function getCreatorFromRecommendation(item) {
   const owner =
     item.querySelector("ytd-channel-name #text a") ||
+    item.querySelector("ytd-channel-name #text") ||
     item.querySelector("ytd-channel-name a") ||
     item.querySelector("yt-formatted-string.ytd-channel-name a") ||
+    item.querySelector("yt-formatted-string.ytd-channel-name") ||
     item.querySelector("#channel-name #text a") ||
+    item.querySelector("#channel-name #text") ||
     item.querySelector("#channel-name a") ||
+    item.querySelector("#byline a") ||
+    item.querySelector("#byline") ||
+    item.querySelector(".byline-style") ||
+    item.querySelector(".yt-lockup-metadata-view-model-wiz__metadata a") ||
     item.querySelector(".yt-lockup-metadata-view-model-wiz__metadata a[href^='/@']") ||
+    item.querySelector(".yt-content-metadata-view-model-wiz__metadata-row a") ||
     item.querySelector(".yt-content-metadata-view-model-wiz__metadata-row a[href^='/@']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/@']") ||
     item.querySelector("a.yt-simple-endpoint[href^='/channel/']") ||
@@ -237,8 +271,26 @@ function getCreatorFromRecommendation(item) {
     item.querySelector("a#video-title")?.getAttribute("aria-label") ||
     item.querySelector("a[href*='watch?v=']")?.getAttribute("aria-label") ||
     item.getAttribute("aria-label");
+  const ariaCreator = parseAriaLabel(ariaLabel).creator;
 
-  return parseAriaLabel(ariaLabel).creator;
+  if (ariaCreator) {
+    return ariaCreator;
+  }
+
+  const title = getCandidateTitle(null, item);
+  const titleNormalized = normalize(title);
+  const fallbackLine = getVisibleLines(item).find((line) => {
+    const normalizedLine = normalize(line);
+    return (
+      normalizedLine &&
+      normalizedLine !== titleNormalized &&
+      !titleNormalized.includes(normalizedLine) &&
+      !normalizedLine.includes(titleNormalized) &&
+      !isMetadataLine(line)
+    );
+  });
+
+  return fallbackLine || "";
 }
 
 function getVideoItemFromLink(link) {
