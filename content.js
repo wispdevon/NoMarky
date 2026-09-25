@@ -24,8 +24,18 @@ const state = {
 const SIDEBAR_ITEM_SELECTORS = [
   "ytd-compact-video-renderer",
   "ytd-compact-radio-renderer",
-  "ytd-compact-playlist-renderer"
+  "ytd-compact-playlist-renderer",
+  "yt-lockup-view-model",
+  "ytd-rich-item-renderer"
 ].join(",");
+
+const SIDEBAR_CONTAINER_SELECTORS = [
+  "ytd-watch-next-secondary-results-renderer",
+  "ytd-watch-flexy #secondary",
+  "ytd-watch-flexy #secondary-inner",
+  "#secondary",
+  "#related"
+];
 
 const WATCH_LINK_SELECTOR = "a[href]";
 const REJECTED_VIDEO_IDS_KEY = "nomarkyRejectedVideoIds";
@@ -124,7 +134,42 @@ function blockedTextMatches(value) {
 }
 
 function getSidebar() {
-  return document.querySelector("ytd-watch-next-secondary-results-renderer");
+  for (const selector of SIDEBAR_CONTAINER_SELECTORS) {
+    const element = document.querySelector(selector);
+
+    if (element?.querySelector(SIDEBAR_ITEM_SELECTORS)) {
+      return element;
+    }
+  }
+
+  return null;
+}
+
+function getSidebarInfo() {
+  const sidebar = getSidebar();
+
+  if (sidebar) {
+    return {
+      sidebar,
+      source: sidebar.tagName.toLowerCase() + (sidebar.id ? `#${sidebar.id}` : ""),
+      items: [...sidebar.querySelectorAll(SIDEBAR_ITEM_SELECTORS)]
+    };
+  }
+
+  const items = [...document.querySelectorAll(SIDEBAR_ITEM_SELECTORS)].filter((item) => {
+    const rect = item.getBoundingClientRect();
+    const tagName = item.tagName.toLowerCase();
+    const looksLikeCompactRecommendation = tagName.startsWith("ytd-compact");
+    const appearsInRightRail = rect.left > window.innerWidth * 0.45;
+
+    return rect.width > 0 && rect.height > 0 && (looksLikeCompactRecommendation || appearsInRightRail);
+  });
+
+  return {
+    sidebar: document,
+    source: "document visible fallback",
+    items
+  };
 }
 
 function getRejectedVideoIds() {
@@ -269,15 +314,16 @@ function getAllAnchorLinks() {
 }
 
 function markBlockedRecommendations() {
-  const sidebar = getSidebar();
+  const { source, items } = getSidebarInfo();
 
-  if (!sidebar) {
+  if (items.length === 0) {
     return [];
   }
 
   const safeCandidates = [];
+  const rejectedCandidates = [];
 
-  sidebar.querySelectorAll(SIDEBAR_ITEM_SELECTORS).forEach((item) => {
+  items.forEach((item) => {
     const creator = getCreatorFromRecommendation(item);
     const isBlocked = creatorMatches(creator) || blockedTextMatches(item.textContent);
 
@@ -298,9 +344,38 @@ function markBlockedRecommendations() {
           ...describeCandidate(link || item, item, url),
           url
         });
+      } else {
+        rejectedCandidates.push({
+          reason: !url
+            ? "no watch URL"
+            : !isDifferentVideo(url)
+              ? "current video"
+              : !isPlainWatchVideo(url)
+                ? "playlist/non-watch URL"
+                : "recently blocked video id",
+          creator: creator || "(unknown creator)",
+          videoId: videoId || "(no id)",
+          url
+        });
       }
+    } else {
+      rejectedCandidates.push({
+        reason: "blocked text or creator",
+        creator: creator || "(unknown creator)",
+        videoId: getVideoId(getRecommendationUrl(item) || "") || "(no id)"
+      });
     }
   });
+
+  if (safeCandidates.length > 0) {
+    debugLog("Sidebar candidates found", {
+      source,
+      itemCount: items.length,
+      safeCount: safeCandidates.length,
+      rejectedCount: rejectedCandidates.length,
+      rejectedSamples: rejectedCandidates.slice(0, 8)
+    });
+  }
 
   return safeCandidates;
 }
@@ -525,11 +600,12 @@ async function waitForAlternativeVideoUrl() {
     await delay(250);
   }
 
-  const sidebar = getSidebar();
-  const itemCount = sidebar?.querySelectorAll(SIDEBAR_ITEM_SELECTORS).length || 0;
+  const { source, items } = getSidebarInfo();
+  const itemCount = items.length;
   showToast(`No safe sidebar pick after checking ${itemCount} recommended items.`, "error");
   debugLog("No random sidebar candidate found", {
     page: window.location.href,
+    sidebarSource: source,
     sidebarItemCount: itemCount,
     rejectedVideoIds: getRejectedVideoIds()
   });
