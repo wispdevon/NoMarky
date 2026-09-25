@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NoMarky Options</title>
+    <link rel="stylesheet" href="ui.css">
+  </head>
+  <body>
+    <main class="options">
+      <h1>NoMarky</h1>
+      <p>One channel name per line. Matching is case-insensitive and ignores accents.</p>
+      <textarea id="blockedCreators" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="save" type="button">Save</button>
+        <button id="restore" type="button">Restore defaults</button>
+      </div>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

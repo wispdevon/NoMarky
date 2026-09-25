@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "NoMarky",
+  "description": "Hide Markiplier-related recommendations and jump to a safe sidebar video if one starts playing.",
+  "version": "1.0.0",
+  "icons": {
+    "48": "icons/nomarky-48.png",
+    "96": "icons/nomarky-96.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nomarky@local",
+      "strict_min_version": "126.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "NoMarky",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/nomarky-48.png",
+      "96": "icons/nomarky-96.png"
+    }
+  }
+}

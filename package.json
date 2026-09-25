@@ -1,0 +1,13 @@
+{
+  "name": "nomarky",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hide Markiplier-related YouTube recommendations and jump away from blocked videos.",
+  "scripts": {
+    "build:firefox": "web-ext build --overwrite-dest --ignore-files package.json package-lock.json README.md web-ext-artifacts node_modules",
+    "lint:firefox": "web-ext lint --ignore-files package.json package-lock.json README.md web-ext-artifacts node_modules"
+  },
+  "devDependencies": {
+    "web-ext": "^8.9.0"
+  }
+}

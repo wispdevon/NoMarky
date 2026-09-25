@@ -1,0 +1,43 @@
+.nomarky-hidden {
+  display: none !important;
+}
+
+.nomarky-toast-stack {
+  position: fixed;
+  right: 18px;
+  top: 72px;
+  z-index: 2147483647;
+  display: grid;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.nomarky-toast {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-left: 4px solid #6aa9ff;
+  border-radius: 6px;
+  background: rgba(20, 20, 22, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  color: #ffffff;
+  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 10px 12px;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.nomarky-toast-success {
+  border-left-color: #42d392;
+}
+
+.nomarky-toast-warn {
+  border-left-color: #ffce45;
+}
+
+.nomarky-toast-error {
+  border-left-color: #ff5c70;
+}
+
+.nomarky-toast-exiting {
+  opacity: 0;
+  transform: translateY(-6px);
+}
