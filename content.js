@@ -16,7 +16,6 @@ const state = {
   blockedCreators: DEFAULT_BLOCKED_CREATORS,
   lastAutoJumpVideoId: null,
   autoJumpInProgress: false,
-  fallbackInProgress: false,
   lastCandidateToastAt: 0,
   lastVerboseToastAt: 0,
   scanTimer: null
@@ -29,12 +28,7 @@ const SIDEBAR_ITEM_SELECTORS = [
 ].join(",");
 
 const WATCH_LINK_SELECTOR = "a[href]";
-const FALLBACK_TARGET_KEY = "nomarkyFallbackTarget";
 const REJECTED_VIDEO_IDS_KEY = "nomarkyRejectedVideoIds";
-const FALLBACK_PAGE_URLS = [
-  "https://www.youtube.com/feed/subscriptions",
-  "https://www.youtube.com/"
-];
 
 const delay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -81,7 +75,7 @@ function showToast(message, tone = "info") {
   window.setTimeout(() => {
     toast.classList.add("nomarky-toast-exiting");
     window.setTimeout(() => toast.remove(), 300);
-  }, 3500);
+  }, 9000);
 }
 
 function debugLog(message, data = {}) {
@@ -133,10 +127,6 @@ function getSidebar() {
   return document.querySelector("ytd-watch-next-secondary-results-renderer");
 }
 
-function getCurrentFallbackTarget() {
-  return sessionStorage.getItem(FALLBACK_TARGET_KEY);
-}
-
 function getRejectedVideoIds() {
   try {
     const ids = JSON.parse(sessionStorage.getItem(REJECTED_VIDEO_IDS_KEY) || "[]");
@@ -158,20 +148,6 @@ function rememberRejectedVideoId(videoId) {
 
 function isRejectedVideoId(videoId) {
   return Boolean(videoId && getRejectedVideoIds().includes(videoId));
-}
-
-function setNextFallbackTarget() {
-  const currentTarget = getCurrentFallbackTarget();
-  const currentIndex = FALLBACK_PAGE_URLS.indexOf(currentTarget);
-  const nextTarget = FALLBACK_PAGE_URLS[currentIndex + 1] || "";
-
-  if (nextTarget) {
-    sessionStorage.setItem(FALLBACK_TARGET_KEY, nextTarget);
-  } else {
-    sessionStorage.removeItem(FALLBACK_TARGET_KEY);
-  }
-
-  return nextTarget;
 }
 
 function getCreatorFromRecommendation(item) {
@@ -219,6 +195,10 @@ function describeCandidate(link, item, url) {
     videoId: getVideoId(url) || "(no id)",
     url
   };
+}
+
+function pickRandom(items) {
+  return items[Math.floor(Math.random() * items.length)] || null;
 }
 
 function getRecommendationUrl(item) {
@@ -295,7 +275,7 @@ function markBlockedRecommendations() {
     return [];
   }
 
-  const safeUrls = [];
+  const safeCandidates = [];
 
   sidebar.querySelectorAll(SIDEBAR_ITEM_SELECTORS).forEach((item) => {
     const creator = getCreatorFromRecommendation(item);
@@ -309,12 +289,20 @@ function markBlockedRecommendations() {
       const videoId = getVideoId(url || "");
 
       if (url && isDifferentVideo(url) && isPlainWatchVideo(url) && !isRejectedVideoId(videoId)) {
-        safeUrls.push(url);
+        const link =
+          item.querySelector("a#thumbnail[href*='watch']") ||
+          item.querySelector("a#video-title[href*='watch']") ||
+          item.querySelector("a.yt-simple-endpoint[href*='watch']");
+
+        safeCandidates.push({
+          ...describeCandidate(link || item, item, url),
+          url
+        });
       }
     }
   });
 
-  return safeUrls;
+  return safeCandidates;
 }
 
 function getCurrentCreator() {
@@ -513,12 +501,21 @@ function nudgeFeedLoading(attempt) {
 
 async function waitForAlternativeVideoUrl() {
   for (let i = 0; i < 40; i += 1) {
-    const [safeUrl] = markBlockedRecommendations();
+    const safeCandidates = markBlockedRecommendations();
 
-    if (safeUrl) {
-      showToast(`Found safe sidebar video (${getVideoId(safeUrl)}). Switching now.`, "success");
-      debugLog("Picked sidebar candidate", { videoId: getVideoId(safeUrl), url: safeUrl });
-      return safeUrl;
+    if (safeCandidates.length > 0) {
+      const picked = pickRandom(safeCandidates);
+      showToast(
+        `Random sidebar pick: ${picked.title} (${picked.videoId}) from ${picked.creator}.`,
+        "success"
+      );
+      debugLog("Picked random sidebar candidate", {
+        picked,
+        candidates: safeCandidates,
+        candidateCount: safeCandidates.length,
+        rejectedVideoIds: getRejectedVideoIds()
+      });
+      return picked.url;
     }
 
     if (i === 0) {
@@ -528,43 +525,15 @@ async function waitForAlternativeVideoUrl() {
     await delay(250);
   }
 
-  return getSafeWatchUrlFromPage({ report: true });
-}
-
-async function continueFallbackIfNeeded() {
-  const target = getCurrentFallbackTarget();
-
-  if (state.fallbackInProgress || !target || window.location.pathname.startsWith("/watch")) {
-    return;
-  }
-
-  state.fallbackInProgress = true;
-  showToast("Looking for a safe video on this page.", "info");
-
-  for (let i = 0; i < 40; i += 1) {
-    nudgeFeedLoading(i);
-    const url = getSafeWatchUrlFromPage({ report: i % 10 === 0 });
-
-    if (url) {
-      sessionStorage.removeItem(FALLBACK_TARGET_KEY);
-      showToast("Found a safe video. Playing it now.", "success");
-      window.location.assign(url);
-      return;
-    }
-
-    await delay(250);
-  }
-
-  const nextTarget = setNextFallbackTarget();
-  state.fallbackInProgress = false;
-
-  if (nextTarget) {
-    showToast("No safe video here. Trying another YouTube page.", "warn");
-    window.location.assign(nextTarget);
-    return;
-  }
-
-  showToast("No safe videos found on subscriptions or home.", "error");
+  const sidebar = getSidebar();
+  const itemCount = sidebar?.querySelectorAll(SIDEBAR_ITEM_SELECTORS).length || 0;
+  showToast(`No safe sidebar pick after checking ${itemCount} recommended items.`, "error");
+  debugLog("No random sidebar candidate found", {
+    page: window.location.href,
+    sidebarItemCount: itemCount,
+    rejectedVideoIds: getRejectedVideoIds()
+  });
+  return null;
 }
 
 async function autoJumpIfNeeded() {
@@ -594,19 +563,20 @@ async function autoJumpIfNeeded() {
   const safeUrl = await waitForAlternativeVideoUrl();
 
   if (safeUrl) {
-    sessionStorage.removeItem(FALLBACK_TARGET_KEY);
     window.location.assign(safeUrl);
     return;
   }
 
-  sessionStorage.setItem(FALLBACK_TARGET_KEY, FALLBACK_PAGE_URLS[0]);
-  showToast("No safe sidebar video yet. Trying your subscriptions/home feed.", "warn");
-  window.location.assign(FALLBACK_PAGE_URLS[0]);
+  showToast("No safe recommended sidebar video found. Staying put and retrying as YouTube loads more.", "error");
+  debugLog("No safe sidebar candidate found; not using autoplay/feed fallback", {
+    currentVideoId: videoId,
+    rejectedVideoIds: getRejectedVideoIds()
+  });
+  state.autoJumpInProgress = false;
 }
 
 function scan() {
   markBlockedRecommendations();
-  continueFallbackIfNeeded();
   autoJumpIfNeeded();
 }
 
@@ -642,7 +612,6 @@ function watchYouTubeNavigation() {
   document.addEventListener("yt-navigate-finish", () => {
     state.lastAutoJumpVideoId = null;
     state.autoJumpInProgress = false;
-    state.fallbackInProgress = false;
     scheduleScan();
   });
 
