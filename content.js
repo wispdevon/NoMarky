@@ -18,6 +18,7 @@ const state = {
   autoJumpInProgress: false,
   fallbackInProgress: false,
   lastCandidateToastAt: 0,
+  lastVerboseToastAt: 0,
   scanTimer: null
 };
 
@@ -29,6 +30,7 @@ const SIDEBAR_ITEM_SELECTORS = [
 
 const WATCH_LINK_SELECTOR = "a[href]";
 const FALLBACK_TARGET_KEY = "nomarkyFallbackTarget";
+const REJECTED_VIDEO_IDS_KEY = "nomarkyRejectedVideoIds";
 const FALLBACK_PAGE_URLS = [
   "https://www.youtube.com/feed/subscriptions",
   "https://www.youtube.com/"
@@ -82,6 +84,21 @@ function showToast(message, tone = "info") {
   }, 3500);
 }
 
+function debugLog(message, data = {}) {
+  console.info(`[NoMarky] ${message}`, data);
+}
+
+function showVerboseToast(message, tone = "info") {
+  const now = Date.now();
+
+  if (now - state.lastVerboseToastAt < 1200) {
+    return;
+  }
+
+  state.lastVerboseToastAt = now;
+  showToast(message, tone);
+}
+
 function creatorMatches(channelName) {
   const normalizedChannel = normalize(channelName);
 
@@ -118,6 +135,29 @@ function getSidebar() {
 
 function getCurrentFallbackTarget() {
   return sessionStorage.getItem(FALLBACK_TARGET_KEY);
+}
+
+function getRejectedVideoIds() {
+  try {
+    const ids = JSON.parse(sessionStorage.getItem(REJECTED_VIDEO_IDS_KEY) || "[]");
+    return Array.isArray(ids) ? ids.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRejectedVideoId(videoId) {
+  if (!videoId) {
+    return;
+  }
+
+  const ids = [videoId, ...getRejectedVideoIds().filter((id) => id !== videoId)].slice(0, 12);
+  sessionStorage.setItem(REJECTED_VIDEO_IDS_KEY, JSON.stringify(ids));
+  debugLog("Remembering blocked/rejected video id", { videoId, rejectedVideoIds: ids });
+}
+
+function isRejectedVideoId(videoId) {
+  return Boolean(videoId && getRejectedVideoIds().includes(videoId));
 }
 
 function setNextFallbackTarget() {
@@ -159,6 +199,26 @@ function getVideoItemFromLink(link) {
       "ytd-rich-grid-media"
     ].join(",")
   );
+}
+
+function getCandidateTitle(link, item) {
+  const title =
+    item?.querySelector("#video-title")?.textContent ||
+    item?.querySelector("a#video-title")?.getAttribute("title") ||
+    link.getAttribute("aria-label") ||
+    link.getAttribute("title") ||
+    link.textContent;
+
+  return (title || "").replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
+function describeCandidate(link, item, url) {
+  return {
+    title: getCandidateTitle(link, item) || "(untitled)",
+    creator: item ? getCreatorFromRecommendation(item) || "(unknown creator)" : "(no card)",
+    videoId: getVideoId(url) || "(no id)",
+    url
+  };
 }
 
 function getRecommendationUrl(item) {
@@ -246,8 +306,9 @@ function markBlockedRecommendations() {
 
     if (state.enabled && !isBlocked) {
       const url = getRecommendationUrl(item);
+      const videoId = getVideoId(url || "");
 
-      if (url && isDifferentVideo(url) && isPlainWatchVideo(url)) {
+      if (url && isDifferentVideo(url) && isPlainWatchVideo(url) && !isRejectedVideoId(videoId)) {
         safeUrls.push(url);
       }
     }
@@ -295,7 +356,12 @@ function getSafeWatchUrlFromItem(item) {
   const href = link?.getAttribute("href") || link?.href;
   const url = href ? toAbsoluteUrl(href) : null;
 
-  if (!url || !isDifferentVideo(url) || !isPlainWatchVideo(url)) {
+  if (
+    !url ||
+    !isDifferentVideo(url) ||
+    !isPlainWatchVideo(url) ||
+    isRejectedVideoId(getVideoId(url))
+  ) {
     return null;
   }
 
@@ -332,6 +398,8 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
   let duplicateCount = 0;
   let playlistCount = 0;
   let blockedCount = 0;
+  let rememberedBlockedCount = 0;
+  const rejectedSamples = [];
 
   for (const link of links) {
     anchorCount += 1;
@@ -343,6 +411,8 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
     }
 
     seen.add(url);
+
+    let targetVideoId = "";
 
     try {
       const parsed = new URL(url);
@@ -356,9 +426,11 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
       }
 
       watchCandidateCount += 1;
+      targetVideoId = parsed.searchParams.get("v") || "";
 
       if (parsed.searchParams.has("list")) {
         playlistCount += 1;
+        rejectedSamples.push({ reason: "playlist", url });
         continue;
       }
     } catch {
@@ -367,6 +439,13 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
 
     if (!isDifferentVideo(url)) {
       duplicateCount += 1;
+      rejectedSamples.push({ reason: "current video", url });
+      continue;
+    }
+
+    if (isRejectedVideoId(targetVideoId)) {
+      rememberedBlockedCount += 1;
+      rejectedSamples.push({ reason: "recently blocked video id", videoId: targetVideoId, url });
       continue;
     }
 
@@ -375,9 +454,16 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
 
     if (blockedTextMatches(textToCheck) || (item && !isSafeRecommendation(item))) {
       blockedCount += 1;
+      rejectedSamples.push({
+        reason: "blocked text or creator",
+        ...describeCandidate(link, item, url)
+      });
       continue;
     }
 
+    const picked = describeCandidate(link, item, url);
+    debugLog("Picked safe candidate", picked);
+    showToast(`Playing: ${picked.title} (${picked.videoId})`, "success");
     return url;
   }
 
@@ -395,9 +481,20 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
     if (now - state.lastCandidateToastAt > 2500) {
       state.lastCandidateToastAt = now;
       showToast(
-        `Checked ${anchorCount} links, ${watchCandidateCount} videos: ${blockedCount} blocked, ${playlistCount} playlists, ${duplicateCount} current video.`,
+        `Checked ${anchorCount} links, ${watchCandidateCount} videos: ${blockedCount} blocked, ${rememberedBlockedCount} recent, ${playlistCount} playlists, ${duplicateCount} current.`,
         "info"
       );
+      debugLog("No safe candidate found", {
+        page: window.location.href,
+        anchorCount,
+        watchCandidateCount,
+        blockedCount,
+        rememberedBlockedCount,
+        playlistCount,
+        duplicateCount,
+        rejectedVideoIds: getRejectedVideoIds(),
+        rejectedSamples: rejectedSamples.slice(0, 8)
+      });
     }
   }
 
@@ -419,7 +516,8 @@ async function waitForAlternativeVideoUrl() {
     const [safeUrl] = markBlockedRecommendations();
 
     if (safeUrl) {
-      showToast("Found a safe sidebar video. Switching now.", "success");
+      showToast(`Found safe sidebar video (${getVideoId(safeUrl)}). Switching now.`, "success");
+      debugLog("Picked sidebar candidate", { videoId: getVideoId(safeUrl), url: safeUrl });
       return safeUrl;
     }
 
@@ -488,8 +586,10 @@ async function autoJumpIfNeeded() {
 
   state.lastAutoJumpVideoId = videoId;
   state.autoJumpInProgress = true;
+  rememberRejectedVideoId(videoId);
   pauseCurrentVideo();
-  showToast(`Paused blocked video from ${creator}.`, "warn");
+  showToast(`Paused blocked video from ${creator} (${videoId}).`, "warn");
+  debugLog("Blocked current video", { videoId, creator, url: window.location.href });
 
   const safeUrl = await waitForAlternativeVideoUrl();
 
@@ -528,6 +628,11 @@ function loadSettings() {
       state.blockedCreators = Array.isArray(settings.blockedCreators)
         ? settings.blockedCreators
         : DEFAULT_BLOCKED_CREATORS;
+      debugLog("Loaded settings", {
+        enabled: state.enabled,
+        autoJump: state.autoJump,
+        blockedCreators: state.blockedCreators
+      });
       scheduleScan();
     }
   );
@@ -565,6 +670,7 @@ extensionApi.storage.onChanged.addListener((changes, area) => {
     state.blockedCreators = Array.isArray(changes.blockedCreators.newValue)
       ? changes.blockedCreators.newValue
       : DEFAULT_BLOCKED_CREATORS;
+    debugLog("Updated blocked creators", { blockedCreators: state.blockedCreators });
   }
 
   scheduleScan();
