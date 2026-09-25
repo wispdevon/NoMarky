@@ -106,33 +106,28 @@ function showVerboseToast(message, tone = "info") {
 }
 
 function creatorMatches(channelName) {
-  const normalizedChannel = normalize(channelName);
-
-  if (!normalizedChannel) {
-    return false;
-  }
-
-  return state.blockedCreators.some((creator) => {
-    const normalizedCreator = normalize(creator);
-    return (
-      normalizedCreator &&
-      (normalizedChannel === normalizedCreator ||
-        normalizedChannel.includes(normalizedCreator))
-    );
-  });
+  return Boolean(getMatchingBlockedCreator(channelName));
 }
 
-function blockedTextMatches(value) {
+function getMatchingBlockedCreator(value) {
   const normalizedValue = normalize(value);
 
   if (!normalizedValue) {
-    return false;
+    return "";
   }
 
-  return state.blockedCreators.some((creator) => {
+  return state.blockedCreators.find((creator) => {
     const normalizedCreator = normalize(creator);
-    return normalizedCreator && normalizedValue.includes(normalizedCreator);
-  });
+    return (
+      normalizedCreator &&
+      (normalizedValue === normalizedCreator ||
+        normalizedValue.includes(normalizedCreator))
+    );
+  }) || "";
+}
+
+function blockedTextMatches(value) {
+  return Boolean(getMatchingBlockedCreator(value));
 }
 
 function getSidebar() {
@@ -416,12 +411,15 @@ function isPlainWatchVideo(url) {
 
 function isSafeRecommendation(item) {
   const creator = getCreatorFromRecommendation(item);
+  const title = getCandidateTitle(null, item);
+  const matchedCreator = getMatchingBlockedCreator(creator);
+  const matchedTitle = getMatchingBlockedCreator(title);
 
-  if (creator && creatorMatches(creator)) {
+  if (matchedCreator || matchedTitle) {
     return false;
   }
 
-  return !blockedTextMatches(item.textContent);
+  return true;
 }
 
 function getPageCandidateItems() {
@@ -453,7 +451,10 @@ function markBlockedRecommendations() {
 
   items.forEach((item) => {
     const creator = getCreatorFromRecommendation(item);
-    const isBlocked = creatorMatches(creator) || blockedTextMatches(item.textContent);
+    const title = getCandidateTitle(null, item);
+    const matchedCreator = getMatchingBlockedCreator(creator);
+    const matchedTitle = getMatchingBlockedCreator(title);
+    const isBlocked = Boolean(matchedCreator || matchedTitle);
 
     item.classList.toggle("nomarky-hidden", state.enabled && isBlocked);
     item.dataset.nomarkyCreator = creator;
@@ -491,8 +492,10 @@ function markBlockedRecommendations() {
       }
     } else {
       rejectedCandidates.push({
-        reason: "blocked text or creator",
+        reason: matchedCreator ? "blocked creator" : "blocked title",
+        matchedBlockedTerm: matchedCreator || matchedTitle,
         creator: creator || "(unknown creator)",
+        title: title || "(untitled)",
         videoId: getVideoId(getRecommendationUrl(item) || "") || "(no id)"
       });
     }
@@ -571,11 +574,6 @@ function getSafeWatchUrlFromLink(link) {
   }
 
   const item = getVideoItemFromLink(link);
-  const textToCheck = item?.textContent || link.getAttribute("aria-label") || link.textContent;
-
-  if (blockedTextMatches(textToCheck)) {
-    return null;
-  }
 
   if (item && !isSafeRecommendation(item)) {
     return null;
@@ -644,18 +642,21 @@ function getSafeWatchUrlFromPage({ report = false } = {}) {
     }
 
     const item = getVideoItemFromLink(link);
-    const textToCheck = item?.textContent || link.getAttribute("aria-label") || link.textContent;
+    const candidate = describeCandidate(link, item, url);
+    const matchedCreator = getMatchingBlockedCreator(candidate.creator);
+    const matchedTitle = getMatchingBlockedCreator(candidate.title);
 
-    if (blockedTextMatches(textToCheck) || (item && !isSafeRecommendation(item))) {
+    if (matchedCreator || matchedTitle || (item && !isSafeRecommendation(item))) {
       blockedCount += 1;
       rejectedSamples.push({
-        reason: "blocked text or creator",
-        ...describeCandidate(link, item, url)
+        reason: matchedCreator ? "blocked creator" : "blocked title",
+        matchedBlockedTerm: matchedCreator || matchedTitle,
+        ...candidate
       });
       continue;
     }
 
-    const picked = describeCandidate(link, item, url);
+    const picked = candidate;
     debugLog("Picked safe candidate", picked);
     showToast(`Playing: ${picked.title} (${picked.videoId})`, "success");
     return url;
