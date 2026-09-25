@@ -365,27 +365,30 @@ function describeRecommendationItem(item) {
   };
 }
 
+function getRecommendationLinks(item) {
+  return [
+    item.querySelector("a#video-title[href*='watch']"),
+    item.querySelector("a[href*='watch?v='][title]"),
+    item.querySelector(".yt-lockup-metadata-view-model-wiz__title a[href*='watch']"),
+    item.querySelector("h3 a[href*='watch']"),
+    item.querySelector("a.yt-simple-endpoint[href*='watch']"),
+    item.querySelector("a#thumbnail[href*='watch']")
+  ].filter(Boolean);
+}
+
 function pickRandom(items) {
   return items[Math.floor(Math.random() * items.length)] || null;
 }
 
 function getRecommendationUrl(item) {
-  const link =
-    item.querySelector("a#thumbnail[href*='watch']") ||
-    item.querySelector("a#video-title[href*='watch']") ||
-    item.querySelector("a.yt-simple-endpoint[href*='watch']");
+  const urls = getRecommendationLinks(item)
+    .map((link) => {
+      const href = link.getAttribute("href") || link.href;
+      return href ? toAbsoluteUrl(href) : null;
+    })
+    .filter(Boolean);
 
-  const href = link?.getAttribute("href") || link?.href;
-
-  if (!href) {
-    return null;
-  }
-
-  try {
-    return new URL(href, window.location.origin).toString();
-  } catch {
-    return null;
-  }
+  return urls.find(isPlainWatchVideo) || urls[0] || null;
 }
 
 function isDifferentVideo(url) {
@@ -512,6 +515,44 @@ function markBlockedRecommendations() {
   }
 
   return safeCandidates;
+}
+
+function inspectSidebarRecommendations() {
+  const { source, items } = getSidebarInfo();
+  const inspected = items.map((item) => {
+    const creator = getCreatorFromRecommendation(item);
+    const title = getCandidateTitle(null, item);
+    const url = getRecommendationUrl(item);
+    const videoId = getVideoId(url || "");
+    const matchedCreator = getMatchingBlockedCreator(creator);
+    const matchedTitle = getMatchingBlockedCreator(title);
+    let reason = "safe";
+
+    if (matchedCreator) {
+      reason = `blocked creator: ${matchedCreator}`;
+    } else if (matchedTitle) {
+      reason = `blocked title: ${matchedTitle}`;
+    } else if (!url) {
+      reason = "no watch URL";
+    } else if (!isDifferentVideo(url)) {
+      reason = "current video";
+    } else if (!isPlainWatchVideo(url)) {
+      reason = "playlist/non-watch URL";
+    } else if (isRejectedVideoId(videoId)) {
+      reason = "recently blocked video id";
+    }
+
+    return {
+      creator: creator || "(unknown creator)",
+      title: title || "(untitled)",
+      label: `${truncate(creator || "(unknown creator)", 28)} - ${truncate(title || "(untitled)", 68)} [${reason}]`,
+      reason,
+      videoId: videoId || "(no id)",
+      url
+    };
+  });
+
+  return { source, items, inspected };
 }
 
 function getCurrentCreator() {
@@ -732,14 +773,13 @@ async function waitForAlternativeVideoUrl() {
     await delay(250);
   }
 
-  const { source, items } = getSidebarInfo();
+  const { source, items, inspected } = inspectSidebarRecommendations();
   const itemCount = items.length;
-  const checkedItems = items.map(describeRecommendationItem);
-  const checkedList = checkedItems
-    .slice(0, 6)
+  const checkedList = inspected
+    .slice(0, 5)
     .map((item) => item.label)
     .join(" | ");
-  const remainingCount = Math.max(0, checkedItems.length - 6);
+  const remainingCount = Math.max(0, inspected.length - 5);
   const moreText = remainingCount ? ` | +${remainingCount} more` : "";
 
   showToast(
@@ -750,7 +790,7 @@ async function waitForAlternativeVideoUrl() {
     page: window.location.href,
     sidebarSource: source,
     sidebarItemCount: itemCount,
-    checkedItems,
+    checkedItems: inspected,
     rejectedVideoIds: getRejectedVideoIds()
   });
   return null;
